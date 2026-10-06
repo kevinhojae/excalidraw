@@ -2898,6 +2898,11 @@ class App extends React.Component<AppProps, AppState> {
                             visibleElements={embeddableBands.base}
                             {...this.staticCanvasProps}
                           />
+                          {
+                            // before the canvases that are painted above the
+                            // embeddables: equal z-index stacks in DOM order
+                            this.renderEmbeddables()
+                          }
                           {previewElement && !isHighlighter && ( //zsviczian -- highlighter previews render below StaticCanvas; toolbar-drag previews render here
                             <NewElementCanvas
                               appState={this.state}
@@ -2986,7 +2991,6 @@ class App extends React.Component<AppProps, AppState> {
                               <ConvertElementTypePopup app={this} />
                             )}
                         </ExcalidrawActionManagerContext.Provider>
-                        {this.renderEmbeddables()}
                       </ExcalidrawElementsContext.Provider>
                     </ExcalidrawAppStateContext.Provider>
                   </ExcalidrawSetAppStateContext.Provider>

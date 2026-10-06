@@ -118,14 +118,15 @@ body.excalidraw-cursor-resize * {
       z-index: var(--zIndex-interactiveCanvas);
     }
 
-    // The selection UI is painted above the embeddables. An active
-    // embeddable has to receive the pointer, so the canvas stays beneath it.
-    &.interactive:not(.excalidraw--embeddable-active *) {
-      z-index: 3;
+    // The interactive canvas follows the embeddables in the DOM, so the
+    // selection UI is painted above them. An active embeddable has to
+    // receive the pointer, so the canvas drops beneath it.
+    &.interactive:is(.excalidraw--embeddable-active *) {
+      z-index: var(--zIndex-canvas);
     }
 
     &.above-embeddables {
-      z-index: 3;
+      z-index: 2;
       pointer-events: none;
     }
 
