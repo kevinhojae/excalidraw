@@ -486,6 +486,7 @@ import { searchItemInFocusAtom } from "./SearchMenu";
 import { isSidebarDockedAtom } from "./Sidebar/Sidebar";
 import { hideTooltip } from "./Tooltip";
 import { StaticCanvas, InteractiveCanvas } from "./canvases";
+import { splitElementsByEmbeddables } from "../renderer/embeddableBands";
 import NewElementCanvas from "./canvases/NewElementCanvas";
 import { isPointHittingLink } from "./hyperlink/helpers";
 import { CursorHint, CursorHints } from "./CursorHint";
@@ -539,6 +540,7 @@ import type {
   ViewportUIName,
 } from "../types";
 import type { RoughCanvas } from "roughjs/bin/canvas";
+import type { EmbeddableBands } from "../renderer/embeddableBands";
 import type { Action, ActionName, ActionResult } from "../actions/types";
 import { getFontSize } from "../actions/actionProperties";
 
@@ -718,6 +720,25 @@ class App extends React.Component<AppProps, AppState> {
   /** embeds that have been inserted to DOM (as a perf optim, we don't want to
    * insert to DOM before user initially scrolls to them) */
   private initializedEmbeds = new Set<ExcalidrawIframeLikeElement["id"]>();
+  private embeddableBands: EmbeddableBands & {
+    source: readonly NonDeletedExcalidrawElement[];
+    key: string;
+  } = { source: [], key: "", base: [], overlays: new Map() };
+  private embeddableOverlayCanvases = new Map<
+    ExcalidrawIframeLikeElement["id"],
+    { canvas: HTMLCanvasElement; rc: RoughCanvas }
+  >();
+  /** props shared by the static canvas and the embeddable overlay canvases */
+  private staticCanvasProps: Pick<
+    React.ComponentProps<typeof StaticCanvas>,
+    | "elementsMap"
+    | "allElementsMap"
+    | "canvasNonce"
+    | "selectionNonce"
+    | "scale"
+    | "appState"
+    | "renderConfig"
+  > | null = null;
 
   private elementsPendingErasure: ElementsPendingErasure = new Set();
 
@@ -1883,6 +1904,69 @@ class App extends React.Component<AppProps, AppState> {
     });
   };
 
+  private isEmbeddableRenderedAsDOM = (element: ExcalidrawElement) =>
+    (isEmbeddableElement(element) &&
+      this.embedsValidationStatus.get(element.id) === true) ||
+    isIframeElement(element);
+
+  private getEmbeddableBands(
+    visibleElements: readonly NonDeletedExcalidrawElement[],
+  ) {
+    const key = visibleElements
+      .filter(this.isEmbeddableRenderedAsDOM)
+      .map((element) => element.id)
+      .join();
+    if (
+      this.embeddableBands.source !== visibleElements ||
+      this.embeddableBands.key !== key
+    ) {
+      this.embeddableBands = {
+        ...splitElementsByEmbeddables(
+          visibleElements,
+          this.isEmbeddableRenderedAsDOM,
+        ),
+        source: visibleElements,
+        key,
+      };
+      for (const id of this.embeddableOverlayCanvases.keys()) {
+        if (!this.embeddableBands.overlays.has(id)) {
+          this.embeddableOverlayCanvases.delete(id);
+        }
+      }
+    }
+    return this.embeddableBands;
+  }
+
+  private renderEmbeddableOverlay(
+    embeddableId: ExcalidrawIframeLikeElement["id"],
+  ) {
+    const visibleElements = this.embeddableBands.overlays.get(embeddableId);
+    if (!visibleElements || !this.staticCanvasProps) {
+      return null;
+    }
+    let overlay = this.embeddableOverlayCanvases.get(embeddableId);
+    if (!overlay) {
+      const canvas = this.ownerDocument.createElement("canvas");
+      overlay = { canvas, rc: rough.canvas(canvas) };
+      this.embeddableOverlayCanvases.set(embeddableId, overlay);
+    }
+    return (
+      <StaticCanvas
+        key={`overlay-${embeddableId}`}
+        embeddableOverlay
+        canvas={overlay.canvas}
+        rc={overlay.rc}
+        visibleElements={visibleElements}
+        {...this.staticCanvasProps}
+        renderConfig={{
+          ...this.staticCanvasProps.renderConfig,
+          renderGrid: false,
+          pendingFlowchartNodes: null,
+        }}
+      />
+    );
+  }
+
   private renderEmbeddables() {
     const scale = this.state.zoom.value;
     const normalizedWidth = this.state.width;
@@ -2194,7 +2278,10 @@ class App extends React.Component<AppProps, AppState> {
               </div>
             </div>
           );
-        })}
+        }).flatMap((node, index) => [
+          node,
+          this.renderEmbeddableOverlay(embeddableElements[index].id),
+        ])}
       </>
     );
   }
@@ -2498,6 +2585,38 @@ class App extends React.Component<AppProps, AppState> {
     //zsviczian
     const isHighlighter =
       this.state.newElement?.customData?.strokeOptions?.highlighter;
+
+    this.staticCanvasProps = {
+      elementsMap: renderableElementsMap,
+      allElementsMap,
+      canvasNonce,
+      selectionNonce: this.state.selectionElement?.versionNonce,
+      scale: this.ownerWindow.devicePixelRatio,
+      appState: this.state,
+      renderConfig: {
+        imageCache: this.imageCache,
+        isExporting: false,
+        renderGrid: isGridModeEnabled(this),
+        renderLinks: this.isLinksEnabled(),
+        canvasBackgroundColor: this.state.viewBackgroundColor,
+        embedsValidationStatus: this.embedsValidationStatus,
+        elementsPendingErasure: this.elementsPendingErasure,
+        pendingFlowchartNodes: this.flowchart.pendingNodes,
+        theme: this.state.theme,
+        isHighlighterPenDrawing: isHighlighter, //zsviczian
+        ...this.getRenderOverrideConfig(),
+      },
+    };
+    const embeddableBands = this.getEmbeddableBands(
+      this.elementRenderOffsets.size
+        ? this.renderer.getVisibleElementsWithRenderOffsets(
+            visibleElements,
+            renderableElementsMap,
+            this.state,
+            this.elementRenderOffsets,
+          )
+        : visibleElements,
+    );
     const showShapeSwitchPanel =
       editorJotaiStore.get(convertElementTypePopupAtom)?.type === "panel";
 
@@ -2774,41 +2893,8 @@ class App extends React.Component<AppProps, AppState> {
                           <StaticCanvas
                             canvas={this.canvas}
                             rc={this.rc}
-                            elementsMap={renderableElementsMap}
-                            allElementsMap={allElementsMap}
-                            visibleElements={
-                              this.elementRenderOffsets.size
-                                ? this.renderer.getVisibleElementsWithRenderOffsets(
-                                    visibleElements,
-                                    renderableElementsMap,
-                                    this.state,
-                                    this.elementRenderOffsets,
-                                  )
-                                : visibleElements
-                            }
-                            canvasNonce={canvasNonce}
-                            selectionNonce={
-                              this.state.selectionElement?.versionNonce
-                            }
-                            scale={this.ownerWindow.devicePixelRatio}
-                            appState={this.state}
-                            renderConfig={{
-                              imageCache: this.imageCache,
-                              isExporting: false,
-                              renderGrid: isGridModeEnabled(this),
-                              renderLinks: this.isLinksEnabled(),
-                              canvasBackgroundColor:
-                                this.state.viewBackgroundColor,
-                              embedsValidationStatus:
-                                this.embedsValidationStatus,
-                              elementsPendingErasure:
-                                this.elementsPendingErasure,
-                              pendingFlowchartNodes:
-                                this.flowchart.pendingNodes,
-                              theme: this.state.theme,
-                              isHighlighterPenDrawing: isHighlighter, //zsviczian
-                              ...this.getRenderOverrideConfig(),
-                            }}
+                            visibleElements={embeddableBands.base}
+                            {...this.staticCanvasProps}
                           />
                           {previewElement && !isHighlighter && ( //zsviczian -- highlighter previews render below StaticCanvas; toolbar-drag previews render here
                             <NewElementCanvas
@@ -2841,6 +2927,7 @@ class App extends React.Component<AppProps, AppState> {
                                   ? TOOL_DRAG_PREVIEW_OPACITY
                                   : undefined
                               }
+                              aboveEmbeddables
                             />
                           )}
                           <InteractiveCanvas

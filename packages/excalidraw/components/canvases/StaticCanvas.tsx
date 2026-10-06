@@ -8,7 +8,10 @@ import type {
 } from "@excalidraw/element/types";
 
 import { isRenderThrottlingEnabled } from "../../reactUtils";
-import { renderStaticScene } from "../../renderer/staticScene";
+import {
+  createThrottledStaticSceneRenderer,
+  renderStaticScene,
+} from "../../renderer/staticScene";
 
 import type {
   RenderableElementsMap,
@@ -28,11 +31,21 @@ type StaticCanvasProps = {
   scale: number;
   appState: StaticCanvasAppState;
   renderConfig: StaticCanvasRenderConfig;
+  /**
+   * a transparent canvas stacked above an embeddable's DOM, painting the
+   * elements that follow the embeddable in scene order
+   */
+  embeddableOverlay?: boolean;
 };
 
 const StaticCanvas = (props: StaticCanvasProps) => {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const isComponentMounted = useRef(false);
+  const overlayRenderer = useRef(
+    props.embeddableOverlay ? createThrottledStaticSceneRenderer() : null,
+  );
+
+  useEffect(() => () => overlayRenderer.current?.cancel(), []);
 
   useEffect(() => {
     props.canvas.style.width = `${props.appState.width}px`;
@@ -54,21 +67,28 @@ const StaticCanvas = (props: StaticCanvasProps) => {
 
       wrapper.replaceChildren(canvas);
       canvas.classList.add("excalidraw__canvas", "static");
+      canvas.classList.toggle("embeddable-overlay", !!props.embeddableOverlay);
     }
 
-    renderStaticScene(
-      {
-        canvas,
-        rc: props.rc,
-        scale: props.scale,
-        elementsMap: props.elementsMap,
-        allElementsMap: props.allElementsMap,
-        visibleElements: props.visibleElements,
-        appState: props.appState,
-        renderConfig: props.renderConfig,
-      },
-      isRenderThrottlingEnabled(),
-    );
+    const config = {
+      canvas,
+      rc: props.rc,
+      scale: props.scale,
+      elementsMap: props.elementsMap,
+      allElementsMap: props.allElementsMap,
+      visibleElements: props.visibleElements,
+      appState: props.embeddableOverlay
+        ? { ...props.appState, viewBackgroundColor: "transparent" }
+        : props.appState,
+      renderConfig: props.renderConfig,
+    };
+
+    if (overlayRenderer.current && isRenderThrottlingEnabled()) {
+      overlayRenderer.current(config);
+      return;
+    }
+
+    renderStaticScene(config, isRenderThrottlingEnabled());
   });
 
   return <div className="excalidraw__canvas-wrapper" ref={wrapperRef} />;

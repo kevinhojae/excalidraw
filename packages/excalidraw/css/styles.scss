@@ -118,6 +118,16 @@ body.excalidraw-cursor-resize * {
       z-index: var(--zIndex-interactiveCanvas);
     }
 
+    &.above-embeddables {
+      z-index: 3;
+      pointer-events: none;
+    }
+
+    // stacks with .excalidraw__embeddable-container in DOM order
+    &.embeddable-overlay {
+      z-index: 2;
+    }
+
     // Remove the main canvas from document flow to avoid resizeObserver
     // feedback loop (see https://github.com/excalidraw/excalidraw/pull/3379)
   }

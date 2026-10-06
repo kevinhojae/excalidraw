@@ -545,12 +545,17 @@ const _renderStaticScene = ({
   });
 };
 
-/** throttled to animation framerate */
-export const renderStaticSceneThrottled = throttleRAF(
-  (config: StaticSceneRenderConfig) => {
+/**
+ * A throttle keeps only its latest call, so every canvas painted in the same
+ * frame needs a throttle of its own.
+ */
+export const createThrottledStaticSceneRenderer = () =>
+  throttleRAF((config: StaticSceneRenderConfig) => {
     _renderStaticScene(config);
-  },
-);
+  });
+
+/** throttled to animation framerate */
+export const renderStaticSceneThrottled = createThrottledStaticSceneRenderer();
 
 /**
  * Static scene is the non-ui canvas where we render elements.

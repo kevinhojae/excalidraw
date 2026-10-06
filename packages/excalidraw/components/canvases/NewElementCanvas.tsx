@@ -1,3 +1,4 @@
+import clsx from "clsx";
 import { useEffect, useRef } from "react";
 
 import type { NonDeletedSceneElementsMap } from "@excalidraw/element/types";
@@ -22,6 +23,8 @@ interface NewElementCanvasProps {
   renderConfig: StaticCanvasRenderConfig;
   /** CSS opacity of the whole canvas — a translucent preview of a finished element */
   opacity?: number;
+  /** stack above the embeddables' DOM — the element being drawn is topmost */
+  aboveEmbeddables?: boolean;
 }
 
 const NewElementCanvas = (props: NewElementCanvasProps) => {
@@ -47,7 +50,9 @@ const NewElementCanvas = (props: NewElementCanvasProps) => {
 
   return (
     <canvas
-      className="excalidraw__canvas"
+      className={clsx("excalidraw__canvas", {
+        "above-embeddables": props.aboveEmbeddables,
+      })}
       style={{
         width: props.appState.width,
         height: props.appState.height,
