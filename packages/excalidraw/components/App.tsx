@@ -7727,8 +7727,6 @@ class App extends React.Component<AppProps, AppState> {
       includeLockedElements?: boolean;
     },
   ): NonDeleted<ExcalidrawElement>[] {
-    const iframeLikes: Ordered<NonDeleted<ExcalidrawIframeLikeElement>>[] = [];
-
     const elementsMap = this.scene.getNonDeletedElementsMap();
 
     const elements = (
@@ -7762,19 +7760,9 @@ class App extends React.Component<AppProps, AppState> {
               elementsMap,
             )
           : true;
-      })
-      .filter((el) => {
-        // The parameter elements comes ordered from lower z-index to higher.
-        // We want to preserve that order on the returned array.
-        // Exception being embeddables which should be on top of everything else in
-        // terms of hit testing.
-        if (isIframeLikeElement(el)) {
-          iframeLikes.push(el);
-          return false;
-        }
-        return true;
-      })
-      .concat(iframeLikes) as NonDeleted<ExcalidrawElement>[];
+      }) as NonDeleted<ExcalidrawElement>[];
+    // Ordered from lower z-index to higher. Embeddables keep their place:
+    // elements above them are painted above their DOM (see embeddableBands).
 
     return elements;
   }
