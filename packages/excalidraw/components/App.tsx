@@ -2631,6 +2631,8 @@ class App extends React.Component<AppProps, AppState> {
               this.state.viewModeEnabled ||
               this.state.openDialog?.name === "elementLinkSelector",
             "excalidraw--mobile": this.editorInterface.formFactor === "phone",
+            "excalidraw--embeddable-active":
+              this.state.activeEmbeddable?.state === "active",
             "excalidraw--tray":
               !(this.state.viewModeEnabled || this.state.zenModeEnabled) &&
               this.editorInterface.desktopUIMode === "tray", //zsviczian
