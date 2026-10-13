@@ -258,6 +258,7 @@ export const textWysiwyg = ({
   app,
   autoSelect = true,
   initialCaretSceneCoords = null,
+  initialSelection = null,
 }: {
   /**
    * textWysiwyg only deals with `originalText`
@@ -274,6 +275,8 @@ export const textWysiwyg = ({
   app: App;
   autoSelect?: boolean;
   initialCaretSceneCoords?: { x: number; y: number } | null;
+  /** range of `originalText` to select (takes precedence over the caret) */
+  initialSelection?: { start: number; end: number } | null;
 }): SubmitHandler => {
   const ownerDocument = excalidrawContainer?.ownerDocument ?? document;
   const ownerWindow = ownerDocument.defaultView ?? window;
@@ -464,7 +467,7 @@ export const textWysiwyg = ({
       const editorBoxLeft = updateEditorBoxInsets();
 
       // a free text that stopped growing at the viewport's width (see
-      // App.getMaxTextWidth) wraps from then on, and so does its editor
+      // AppText.getMaxTextWidth) wraps from then on, and so does its editor
       if (
         !updatedTextElement.autoResize &&
         editable.style.whiteSpace !== "pre-wrap"
@@ -702,7 +705,7 @@ export const textWysiwyg = ({
 
   /**
    * A caret typed in under the stats or the styles panel (see
-   * App.getTextSidePanels) is out of sight, yet inside the editor's box, so
+   * AppText.getTextSidePanels) is out of sight, yet inside the editor's box, so
    * the browser doesn't reveal it (unlike the sidebar, the panels don't span
    * the box's height, see updateEditorBoxInsets). Pan the canvas to bring it
    * out from under the panel, on the canvas' side, with some room to spare —
@@ -713,7 +716,7 @@ export const textWysiwyg = ({
     if (!caret) {
       return;
     }
-    for (const name of app.getTextSidePanels()) {
+    for (const name of app.text.getTextSidePanels()) {
       const panel = app.viewport.getSideUIRect(name);
       if (
         panel &&
@@ -734,18 +737,20 @@ export const textWysiwyg = ({
     }
   };
 
-  let pendingInitialSelection = (() => {
-    const caretIndex = getCaretIndexFromInitialSceneCoords();
+  let pendingInitialSelection =
+    initialSelection ??
+    (() => {
+      const caretIndex = getCaretIndexFromInitialSceneCoords();
 
-    if (caretIndex === null) {
-      return null;
-    }
+      if (caretIndex === null) {
+        return null;
+      }
 
-    return {
-      start: caretIndex,
-      end: caretIndex,
-    };
-  })();
+      return {
+        start: caretIndex,
+        end: caretIndex,
+      };
+    })();
 
   if (onChange) {
     editable.onpaste = async (event) => {
@@ -849,8 +854,8 @@ export const textWysiwyg = ({
         editable.selectionEnd = selectionStart;
       }
       onChange(editable.value);
-      // once the update, and any scroll it made (see App.handleTextWysiwyg),
-      // is in the app's state
+      // once the update, and any scroll it made (see
+      // AppText.handleTextWysiwyg), is in the app's state
       queueMicrotask(followCaretFromUnderPanels);
     };
   }
@@ -1083,7 +1088,9 @@ export const textWysiwyg = ({
 
     ownerWindow.removeEventListener("resize", updateWysiwygStyle);
     ownerWindow.removeEventListener("wheel", stopEvent, true);
-    ownerWindow.removeEventListener("pointerdown", onPointerDown);
+    ownerWindow.removeEventListener("pointerdown", onPointerDown, {
+      capture: true,
+    });
     ownerWindow.removeEventListener("pointerup", bindBlurEvent);
     ownerWindow.removeEventListener("blur", handleSubmit);
     ownerWindow.removeEventListener("beforeunload", handleSubmit);
@@ -1150,7 +1157,7 @@ export const textWysiwyg = ({
   };
 
   // prevent blur when changing properties from the menu
-  const onPointerDown = (event: MouseEvent) => {
+  const onPointerDown = (event: PointerEvent) => {
     const target = event?.target;
 
     const isShapeActionsPanel = //zsviczian
@@ -1162,13 +1169,32 @@ export const textWysiwyg = ({
         event.target.closest(`.${CLASSES.MOBILE_TOOLBAR}`));
     // panning canvas
     if (event.button === POINTER_BUTTON.WHEEL) {
+      // before the pan starts: it focuses the container, blurring the editor
+      temporarilyDisableSubmit();
       // trying to pan by clicking inside text area itself -> handle here
       if (target instanceof ownerWindow.HTMLTextAreaElement) {
         event.preventDefault();
         app.pan.start(event);
       }
+      return;
+    }
 
-      temporarilyDisableSubmit();
+    // alt+drag on the text being edited duplicates it, as on the canvas:
+    // finish the edit keeping the text selected, then hand the press to the
+    // canvas (the editor is gone by then, so the canvas receives the drag)
+    if (
+      event.altKey &&
+      !event[KEYS.CTRL_OR_CMD] &&
+      event.button === POINTER_BUTTON.MAIN &&
+      target === editable &&
+      (app.state.activeTool.type === "selection" ||
+        app.state.activeTool.type === "lasso")
+    ) {
+      event.preventDefault();
+      event.stopPropagation();
+      submittedViaKeyboard = true;
+      handleSubmit();
+      app.duplicate.handOverTextEditorPress(event, element.id);
       return;
     }
 

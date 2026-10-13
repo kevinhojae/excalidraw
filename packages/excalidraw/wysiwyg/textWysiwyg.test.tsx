@@ -5,6 +5,7 @@ import { pointFrom } from "@excalidraw/math";
 import {
   getLineHeightInPx,
   getOriginalContainerHeightFromCache,
+  isTextElement,
   newElementWith,
 } from "@excalidraw/element";
 
@@ -48,6 +49,7 @@ import {
 import * as dataModule from "../data";
 import { actionBindText } from "../actions";
 import { actionTextAutoResize } from "../actions/actionTextAutoResize";
+import { getTextAutoResizeHandle } from "../textAutoResizeHandle";
 
 import { CARET_FOLLOW_PADDING } from "./textWysiwyg";
 
@@ -86,6 +88,50 @@ describe("textWysiwyg", () => {
     beforeEach(async () => {
       await render(<Excalidraw handleKeyboardGlobally={true} />);
       API.setElements([]);
+    });
+
+    it("edits raw Obsidian text and saves the parsed text and link", async () => {
+      unmountComponent();
+      const onBeforeTextEdit = vi.fn(() => "[[page]]");
+      const onBeforeTextSubmit = vi.fn(() => ({
+        updatedNextOriginalText: "Page",
+        nextLink: "[[page]]",
+      }));
+      await render(
+        <Excalidraw
+          handleKeyboardGlobally={true}
+          onBeforeTextEdit={onBeforeTextEdit}
+          onBeforeTextSubmit={onBeforeTextSubmit}
+        />,
+      );
+      const text = API.createElement({ type: "text", text: "Page" });
+      API.setElements([text]);
+
+      mouse.doubleClickOn(text);
+      const editor = await getTextEditor();
+      expect(editor.value).toBe("[[page]]");
+      expect(onBeforeTextEdit).toHaveBeenCalledWith(
+        expect.objectContaining({ id: text.id }),
+        true,
+      );
+
+      updateTextEditor(editor, "[[page|alias]]");
+      Keyboard.exitTextEditor(editor);
+
+      expect(onBeforeTextSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({ id: text.id }),
+        expect.any(String),
+        "[[page|alias]]",
+        false,
+      );
+      expect(h.elements[0]).toEqual(
+        expect.objectContaining({
+          rawText: "[[page|alias]]",
+          originalText: "Page",
+          link: "[[page]]",
+          hasTextLink: true,
+        }),
+      );
     });
 
     it("should prefer editing selected text element (non-bindable container present)", async () => {
@@ -1330,6 +1376,38 @@ describe("textWysiwyg", () => {
       editorBox.scrollTop = 0;
     });
 
+    it("should pan the canvas by a wheel-button drag on the editor and keep editing", async () => {
+      // (the editor takes pointer downs from the next frame on)
+      const nextFrame = () =>
+        act(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+      await nextFrame();
+      // in a later editing session, which the earlier ones don't pan too
+      updateTextEditor(textarea, "Hello");
+      Keyboard.exitTextEditor(textarea);
+      Keyboard.keyPress(KEYS.ENTER);
+      textarea = await getTextEditor();
+      await nextFrame();
+      const { scrollX, scrollY } = h.state;
+
+      const pointer = {
+        pointerId: 1,
+        pointerType: "mouse",
+        button: 1,
+        buttons: 4,
+        clientX: 100,
+        clientY: 100,
+      };
+      fireEvent.pointerDown(textarea, pointer);
+      const moved = { ...pointer, clientX: 140, clientY: 120 };
+      fireEvent.pointerMove(window, moved);
+      fireEvent.pointerUp(window, { ...moved, buttons: 0 });
+
+      expect(h.state.scrollX).toBe(scrollX + 40);
+      expect(h.state.scrollY).toBe(scrollY + 20);
+      expect(h.state.editingTextElement?.id).toBe(textElement.id);
+      await waitFor(() => expect(document.activeElement).toBe(textarea));
+    });
+
     it("should keep the editor's box off a docked sidebar", () => {
       const editorBox = textarea.parentElement!;
       const sidebar = dockSidebar(500, 300);
@@ -1468,6 +1546,169 @@ describe("textWysiwyg", () => {
       expect(text.type).toBe("text");
       expect(text.containerId).toBe(rectangle.id);
       expect(text.frameId).toBe(frame.id);
+    });
+
+    it.each(["text tool click", "double-click"] as const)(
+      "should bind text to a shape nested in a transparent one above it on a %s at its center",
+      async (via) => {
+        const inner = API.createElement({
+          type: "rectangle",
+          x: 100,
+          y: 100,
+          width: 200,
+          height: 100,
+        });
+        // on top, with the same center
+        const outer = API.createElement({
+          type: "rectangle",
+          x: 50,
+          y: 50,
+          width: 300,
+          height: 200,
+        });
+        API.setElements([inner, outer]);
+
+        if (via === "text tool click") {
+          UI.clickTool("text");
+          mouse.moveTo(200, 150);
+          expect(h.state.textToolHover).toEqual({
+            type: "container",
+            elementId: inner.id,
+          });
+          mouse.clickAt(200, 150);
+        } else {
+          mouse.doubleClickAt(200, 150);
+        }
+        const editor = await getTextEditor();
+        updateTextEditor(editor, "Label");
+        Keyboard.exitTextEditor(editor);
+
+        const text = h.elements.find(isTextElement)!;
+        expect(text.containerId).toBe(inner.id);
+        expect(outer.boundElements).toBe(null);
+      },
+    );
+
+    it("should not reach a shape below a filled one at its center", () => {
+      const inner = API.createElement({
+        type: "rectangle",
+        x: 100,
+        y: 100,
+        width: 200,
+        height: 100,
+      });
+      const outer = API.createElement({
+        type: "rectangle",
+        x: 50,
+        y: 50,
+        width: 300,
+        height: 200,
+        backgroundColor: "#ffc9c9",
+        fillStyle: "solid",
+      });
+      API.setElements([inner, outer]);
+
+      UI.clickTool("text");
+      mouse.moveTo(200, 150);
+      expect(h.state.textToolHover).toEqual({
+        type: "container",
+        elementId: outer.id,
+      });
+    });
+
+    it("should not let an arrow below a shape take its label off the arrow's path", () => {
+      // midpoint (200, 200), off the path at the shape's center
+      const arrow = API.createElement({
+        type: "arrow",
+        x: 100,
+        y: 100,
+        width: 200,
+        height: 200,
+        points: [pointFrom(0, 0), pointFrom(200, 200)],
+      });
+      const shape = API.createElement({
+        type: "rectangle",
+        x: 65,
+        y: 35,
+        width: 300,
+        height: 300,
+      });
+      API.setElements([arrow, shape]);
+
+      UI.clickTool("text");
+      mouse.moveTo(215, 185);
+      expect(h.state.textToolHover).toEqual({
+        type: "container",
+        elementId: shape.id,
+      });
+    });
+
+    it("should not bind to a frame child's clipped-off part", () => {
+      const frame = API.createElement({
+        type: "frame",
+        x: 0,
+        y: 0,
+        width: 200,
+        height: 200,
+      });
+      // centered outside the frame, where it is clipped
+      const child = API.createElement({
+        type: "rectangle",
+        x: 160,
+        y: 60,
+        width: 100,
+        height: 80,
+        frameId: frame.id,
+      });
+      const shape = API.createElement({
+        type: "rectangle",
+        x: 110,
+        y: 0,
+        width: 200,
+        height: 200,
+      });
+      API.setElements([child, frame, shape]);
+
+      UI.clickTool("text");
+      mouse.moveTo(210, 100);
+      expect(h.state.textToolHover).toEqual({
+        type: "container",
+        elementId: shape.id,
+      });
+    });
+
+    it("should label an arrow below a transparent shape when clicking its midpoint", async () => {
+      const arrow = API.createElement({
+        type: "arrow",
+        x: 100,
+        y: 200,
+        width: 150,
+        height: 0,
+        points: [pointFrom(0, 0), pointFrom(150, 0)],
+      });
+      const shape = API.createElement({
+        type: "rectangle",
+        x: 50,
+        y: 50,
+        width: 300,
+        height: 200,
+      });
+      API.setElements([arrow, shape]);
+
+      UI.clickTool("text");
+      mouse.moveTo(175, 200);
+      expect(h.state.textToolHover).toEqual({
+        type: "arrow",
+        elementId: arrow.id,
+        anchor: "label",
+      });
+      mouse.clickAt(175, 200);
+      const editor = await getTextEditor();
+      updateTextEditor(editor, "Label");
+      Keyboard.exitTextEditor(editor);
+
+      const text = h.elements.find(isTextElement)!;
+      expect(text.containerId).toBe(arrow.id);
     });
 
     it("should set the text element angle to same as container angle when binding to rotated container", async () => {
@@ -1843,6 +2084,10 @@ describe("textWysiwyg", () => {
       expect((h.elements[1] as ExcalidrawTextElement).containerId).toEqual(
         null,
       );
+      expect(h.state.selectedElementIds).toEqual({
+        [rectangle.id]: true,
+        [text.id]: true,
+      });
     });
 
     it("shouldn't bind to container if container has bound text", async () => {
@@ -3321,6 +3566,34 @@ describe("textWysiwyg", () => {
         expect(edge(text)).toBeCloseTo(before, 4);
       },
     );
+
+    it("unwraps a text clicked on its handle", async () => {
+      // the handle's shown on desktop only
+      unmountComponent();
+      await render(
+        <Excalidraw
+          handleKeyboardGlobally={true}
+          UIOptions={{ getFormFactor: () => "desktop" }}
+        />,
+      );
+      API.setElements([wrappedText()]);
+      API.setAppState({ selectedElementIds: { text: true } });
+      const [x, y] = getTextAutoResizeHandle(
+        h.elements[0] as ExcalidrawTextElement,
+        h.state.zoom.value,
+        "desktop",
+      )!.center;
+
+      mouse.moveTo(x, y);
+      expect(GlobalTestState.interactiveCanvas.style.cursor).toBe(
+        CURSOR_TYPE.POINTER,
+      );
+
+      mouse.clickAt(x, y);
+      const text = h.elements[0] as ExcalidrawTextElement;
+      expect(text.autoResize).toBe(true);
+      expect(text.text).toBe(text.originalText);
+    });
   });
 
   describe("history", () => {
