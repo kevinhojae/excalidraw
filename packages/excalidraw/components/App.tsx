@@ -5747,6 +5747,30 @@ class App extends React.Component<AppProps, AppState> {
         });
       }
 
+      // non-latin layouts (e.g. 2-Set Korean, where the R key yields "ㄱ"):
+      // single-letter shortcuts match the physical key's letter
+      if (
+        "Proxy" in this.ownerWindow &&
+        !event.ctrlKey &&
+        !event.altKey &&
+        !event.metaKey &&
+        !isInputLike(event.target) &&
+        getLatinKey(event) !== event.key
+      ) {
+        const latinKey = getLatinKey(event);
+        const key = event.shiftKey ? latinKey.toUpperCase() : latinKey;
+        event = new Proxy(event, {
+          get(ev: any, prop) {
+            const value = ev[prop];
+            if (typeof value === "function") {
+              // fix for Proxies hijacking `this`
+              return value.bind(ev);
+            }
+            return prop === "key" ? key : value;
+          },
+        });
+      }
+
       if (!isInputLike(event.target)) {
         if (
           (event.key === KEYS.ESCAPE || event.key === KEYS.ENTER) &&
@@ -5943,11 +5967,7 @@ class App extends React.Component<AppProps, AppState> {
         !this.state.selectionElement &&
         !this.state.selectedElementsAreBeingDragged
       ) {
-        const shape = findShapeByKey(
-          getLatinKey(event),
-          this,
-          event.shiftKey,
-        );
+        const shape = findShapeByKey(event.key, this, event.shiftKey);
 
         if (this.state.viewModeEnabled && !oneOf(shape, ["laser", "hand"])) {
           return;
