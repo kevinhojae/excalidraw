@@ -136,6 +136,21 @@ export const matchKey = (
   return Boolean(code && !isLatinChar(event.key) && event.code === code);
 };
 
+/**
+ * The key for single-letter shortcuts on any keyboard layout: on non-latin
+ * layouts (e.g. 2-Set Korean, where the R key yields "ㄱ") falls back to the
+ * letter of the physical key.
+ */
+export const getLatinKey = (
+  event: KeyboardEvent | React.KeyboardEvent<Element>,
+): string => {
+  if (isLatinChar(event.key)) {
+    return event.key;
+  }
+  const letter = /^Key([A-Z])$/.exec(event.code)?.[1];
+  return letter ? letter.toLowerCase() : event.key;
+};
+
 export const isArrowKey = (key: string) =>
   key === KEYS.ARROW_LEFT ||
   key === KEYS.ARROW_RIGHT ||

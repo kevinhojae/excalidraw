@@ -1,4 +1,4 @@
-import { KEYS, matchKey } from "../src/keys";
+import { KEYS, getLatinKey, matchKey } from "../src/keys";
 
 describe("key matcher", async () => {
   it("should not match unexpected key", async () => {
@@ -267,5 +267,40 @@ describe("key matcher", async () => {
         KEYS.Y,
       ),
     ).toBeTruthy();
+  });
+});
+
+describe("getLatinKey", () => {
+  it("keeps a latin key as typed", () => {
+    // Arrange
+    const event = new KeyboardEvent("keydown", { key: "R", code: "KeyR" });
+
+    // Act
+    const key = getLatinKey(event);
+
+    // Assert
+    expect(key).toBe("R");
+  });
+
+  it("uses the physical key's letter on a non-latin layout", () => {
+    // Arrange
+    const event = new KeyboardEvent("keydown", { key: "ㄱ", code: "KeyR" });
+
+    // Act
+    const key = getLatinKey(event);
+
+    // Assert
+    expect(key).toBe("r");
+  });
+
+  it("keeps a non-letter key as typed", () => {
+    // Arrange
+    const event = new KeyboardEvent("keydown", { key: "1", code: "Digit1" });
+
+    // Act
+    const key = getLatinKey(event);
+
+    // Assert
+    expect(key).toBe("1");
   });
 });

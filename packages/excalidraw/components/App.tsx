@@ -15,6 +15,7 @@ import {
   shouldMaintainAspectRatio,
   shouldRotateWithDiscreteAngle,
   isArrowKey,
+  getLatinKey,
   KEYS,
   APP_NAME,
   CURSOR_TYPE,
@@ -5942,7 +5943,11 @@ class App extends React.Component<AppProps, AppState> {
         !this.state.selectionElement &&
         !this.state.selectedElementsAreBeingDragged
       ) {
-        const shape = findShapeByKey(event.key, this, event.shiftKey);
+        const shape = findShapeByKey(
+          getLatinKey(event),
+          this,
+          event.shiftKey,
+        );
 
         if (this.state.viewModeEnabled && !oneOf(shape, ["laser", "hand"])) {
           return;
